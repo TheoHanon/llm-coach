@@ -1,12 +1,13 @@
 from typing import List, Dict
-from datetime import datetime
-import json
+from datetime import datetime, timedelta
+import json, os
 from langchain_core.messages import ToolMessage, AIMessage, SystemMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 from my_coach.tools_langchain.tool_save_training_plan import save_training_plan
 from my_coach.tools_langchain.tool_load_training_plan import load_training_plan
 from my_coach.tools_langchain.tool_search import tool_search
-
+from my_coach.mcp.mcp_garmin import garmin_tool
+from .utils import _get_fitness_summary, _build_query
 
 QUESTIONNAIRE: Dict[str, str] = {
     "sport": "The sport (running / cycling / trail / triathlon) you want a program for",
@@ -33,18 +34,42 @@ FIELDS : List[str] = [
 load_node = ToolNode([load_training_plan])
 
 
-def _build_query(specs : Dict[str, str]) -> str:
+def garmin_node(state, llm):
 
-    sport = specs.get("sport", "endurance sports")
-    goal = specs.get("goal", "build_base")
-    add_rem = specs.get("additional_remarks", "none")
+    consent = state.get("garmin_consent")
 
+    if consent is False:
+        return {}
+    
+    try :
+        end = datetime.today().date()
+        start = (end - timedelta(days=90))
+        payload = garmin_tool.invoke({"from_date" : start, "to_date" : end})
+        resp = json.loads(payload)
 
-    return (
-        f"{sport} training best practices for goal being {goal}\n"
-        f"Provide recent, evidence-based guidance.\n"
-        f"Additional specification : {add_rem}\n"
+        summary = _get_fitness_summary(resp)
+
+    except Exception as e:
+        raise ValueError(f"Error while loading Garmin data : {e}")
+    
+
+    sys = (
+    "You are an endurance coach. I will give you a small JSON summary of an athlete's recent Garmin data. "
+    "Explain that you loaded its plan to understand its fitness."
+    "Write a short natural-language summary (3–5 sentences). "
+    "Keep it clear, simple, and motivational. "
+    "Explain that will help to tailor the plan."
+    "Highlight key aspects like average weekly training, session, activity frequency, and overall consistency. "
+    "Do not just restate the numbers—explain what they mean in words."
+    "If summary is empty state it."
     )
+
+    hum = f"Here is the summary JSON:\n{summary}"
+
+    brief = llm.invoke([SystemMessage(content=sys), HumanMessage(content=hum)])
+
+    return {"garmin_data" : summary}
+    
 
 def research_node(state, llm):
 
@@ -127,7 +152,19 @@ def welcome_node(state, llm):
         "Write a concise welcome for an assistant that builds or improves running/cycling/trail plans. "
     )
     resp = llm.invoke([SystemMessage(content=sys), HumanMessage(content=prompt)])
-    return {"welcome": True}
+
+    garmin_consent = False
+
+    if os.environ.get("GARTH_TOKEN"):
+        garmin_consent = True
+
+    if garmin_consent:
+        QUESTIONNAIRE.pop('current_weekly_volume', None)
+        QUESTIONNAIRE.pop('longest_recent', None)
+        FIELDS.remove('current_weekly_volume')
+        FIELDS.remove('longest_recent')
+
+    return {"welcome": True, "garmin_consent": garmin_consent}
 
 
 def after_welcome_node(state, llm):
@@ -157,24 +194,25 @@ def after_welcome_node(state, llm):
         HumanMessage(content=f"User : {last_user}")
     ])
 
-
-    print(resp.mode)
     return {"mode" : resp.mode}
 
 
 def questionnaire_node(state, llm) :
 
+
     sys = (
-        "Your role is simply to rewrite the question in a nice way for the user. "
-        "Stay concise but not cold. The questions will tailor a training plan. Ensure continuity."
-        "You must only ask one question at the time."
-        "Strictly stick to the provided question."
+        "Your role is simply to rewrite the question in a nice way for the user. \n"
+        "Stay concise but not cold. The questions will tailor a training plan. Ensure continuity.\n"
+        "You must only ask one question at the time.\n"
+        "Strictly stick to the provided question.\n"
+        "Even if the user accidentaly answered the question already ask it again.\n"
+        "Not need to say hi to the user."
+        ""
     )
 
 
     step = state.get("question_idx", 0)
     specs = state.get("specs", {})
-    
     if step < len(QUESTIONNAIRE) and step != 0:
 
         usr_resp = state["messages"][-1].content
@@ -183,6 +221,7 @@ def questionnaire_node(state, llm) :
     
 
     if step < len(FIELDS):
+
         nf = FIELDS[step]
         generic_q = QUESTIONNAIRE[nf]
 
@@ -213,8 +252,17 @@ def coach_node(state, llm):
     specs_blob = json.dumps(state.get("specs") or {}, ensure_ascii=False)
     web_brief = (state.get("web_ctx") or {}).get("brief","")
 
-    curr_plan = state.get("plan", None)
+
     modify_query = state.get("modify_query", None)
+    garmin = state.get("garmin_data")
+
+    caps = ""
+    if garmin:
+        caps = (
+            f"\n--- GARMIN FITNESS INFORMATION (use to set bounds, prioritize this information): ---\n"
+            f"{garmin}"
+        )
+    
 
 
     sys = (
@@ -229,8 +277,8 @@ def coach_node(state, llm):
         "--------------------------------------------\n"
         "LIMIT : If the plan is more than 1 months long, start to generate 1 month.\n"
         "--------------------------------------------\n"
+        f"{caps}"
     )
-
 
 
     msgs = [

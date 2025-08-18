@@ -20,6 +20,9 @@ class State(TypedDict):
     modify_mode : Literal["modify", "continue"]
     modify_query : str
     web_ctx : Optional[str]
+    garmin_data : Optional[str]
+    garmin_consent : bool
+
 
 
     

@@ -11,7 +11,7 @@ def route_after_question(state):
 def question_or_welcome_or_discuss(state):
     mode = state.get("mode", None)
     welcome = state.get("welcome", None)
-
+    
     if welcome:
         if not mode:
             return "after_welcome"

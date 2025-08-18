@@ -46,6 +46,9 @@ def build_graph(llms):
     def modify(state : State):
         return nodes.modify_node(state, llm_modify)
     
+    def garmin(state : State):
+        return nodes.garmin_node(state, llm_small)
+    
 
     g = StateGraph(State)
     g.add_node("discuss", discuss)
@@ -53,6 +56,7 @@ def build_graph(llms):
     g.add_node("welcome", welcome)
     g.add_node("after_welcome", after_welcome)
     g.add_node("questionnaire", questionnaire)
+    g.add_node("garmin", garmin)
     g.add_node("coach", coach)
     g.add_node("summary", summary)
     g.add_node("save_node", save_node)
@@ -64,8 +68,9 @@ def build_graph(llms):
     g.add_conditional_edges(START, question_or_welcome_or_discuss, {"questionnaire": "questionnaire", "welcome": "welcome", "discuss" : "modify", "after_welcome" : "after_welcome"})
     g.add_edge("welcome", END)
     g.add_conditional_edges("questionnaire", route_after_question, {"coach": "search", "continue": END})
-    g.add_conditional_edges("after_welcome", question_or_welcome_or_discuss, {"questionnaire": "questionnaire", "welcome": "welcome", "discuss" : "questionnaire", "after_welcome" : "after_welcome"})
-    g.add_edge("search", "coach")
+    g.add_conditional_edges("after_welcome", question_or_welcome_or_discuss, {"questionnaire": "questionnaire", "welcome": "welcome", "discuss" : "discuss", "after_welcome" : "after_welcome"})
+    g.add_edge("search", "garmin")
+    g.add_edge("garmin", "coach")
     g.add_edge("coach", "summary")
     g.add_edge("summary", "save_node")
     g.add_edge("save_node", "save_confirm")

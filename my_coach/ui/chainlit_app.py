@@ -13,6 +13,7 @@ graph = build_graph(llms)
 
 @cl.on_chat_start
 async def start():
+
     config = RunnableConfig({"configurable": {"thread_id": cl.context.session.id}})
     out = cl.Message("")
     await out.send()
