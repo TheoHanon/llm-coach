@@ -9,11 +9,14 @@ pip install -e .
 ````
 ## Run
 
-In the root directory setup a `.env` file with your MISTRAL and TAVILY API KEY.
+In the root directory setup a `.env` file with your MISTRAL and TAVILY API KEY. Also include your [Garth](https://github.com/matin/garth/tree/main) token to load Garmin data.
 ```bash
 MISTRAL_API_KEY="YOUR KEY"
 TAVILY_API_KEY="YOUR KEY"
+GARTH_TOKEN="YOUR TOKEN"
 ```
+Note that the app can work without Tavily and Garth. 
+
 Also from the **root directory**, start the app with:
 ```bash
 chainlit run my_coach/ui/chainlit_app.py
