@@ -30,7 +30,7 @@ def load_training_plan() -> str:
     expected = {"Date", "Description"}
     if not expected.issubset(df.columns):
         return json.dumps(
-            {"error": f"CSV must contain columns {sorted(expected)}.", "path": str(path)},
+            {"status" : "failed", "error": f"CSV must contain columns {sorted(expected)}.", "path": str(path)},
             ensure_ascii=False
         )
 
@@ -38,7 +38,7 @@ def load_training_plan() -> str:
     try:
         df["Date"] = df["Date"].apply(_parse_date)
     except Exception:
-        return json.dumps({"error": 'Dates must be in "DD-MM-YYYY" format.'}, ensure_ascii=False)
+        return json.dumps({"status" : "failed", "error": 'Dates must be in "DD-MM-YYYY" format.'}, ensure_ascii=False)
 
     df = df.sort_values("Date").reset_index(drop=True)
 
@@ -46,4 +46,5 @@ def load_training_plan() -> str:
     df["Date"] = df["Date"].apply(lambda d: d.strftime("%d-%m-%Y"))
     records = df[["Date", "Description"]].to_dict(orient="records")
 
-    return json.dumps(records, ensure_ascii=False)
+    out = {'status' : "ok", "plan" : records}
+    return json.dumps(out)

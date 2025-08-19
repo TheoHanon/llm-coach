@@ -31,46 +31,6 @@ FIELDS : List[str] = [
 ]
 
 
-load_node = ToolNode([load_training_plan])
-
-
-def garmin_node(state, llm):
-
-    consent = state.get("garmin_consent")
-
-    if consent is False:
-        return {}
-    
-    try :
-        end = datetime.today().date()
-        start = (end - timedelta(days=90))
-        payload = garmin_tool.invoke({"from_date" : start, "to_date" : end})
-        resp = json.loads(payload)
-
-        summary = _get_fitness_summary(resp)
-
-    except Exception as e:
-        raise ValueError(f"Error while loading Garmin data : {e}")
-    
-
-    sys = (
-    "You are an endurance coach. I will give you a small JSON summary of an athlete's recent Garmin data. "
-    "Explain that you loaded its plan to understand its fitness."
-    "Write a short natural-language summary (3–5 sentences). "
-    "Keep it clear, simple, and motivational. "
-    "Explain that will help to tailor the plan."
-    "Highlight key aspects like average weekly training, session, activity frequency, and overall consistency. "
-    "Do not just restate the numbers—explain what they mean in words."
-    "If summary is empty state it."
-    )
-
-    hum = f"Here is the summary JSON:\n{summary}"
-
-    brief = llm.invoke([SystemMessage(content=sys), HumanMessage(content=hum)])
-
-    return {"garmin_data" : summary}
-    
-
 def research_node(state, llm):
 
     specs = state.get("specs", {})
@@ -119,86 +79,28 @@ def research_node(state, llm):
 
 def discuss_node(state, llm):
 
+    plan = state.get("plan", [])
     sys = (
         "You are a professional endurance coach (running, cycling, trail, triathlon). "
-        "The user already has a training plan, or wants to discuss their current training. "
+        "Ask what the user want to modify to its current training plan."
         "Your role:\n"
-        "- Answer questions clearly, in plain English, with practical advice.\n"
-        "- Give concise, constructive feedback on the plan.\n"
-        "- If the user asks for adjustments, suggest precise changes (e.g. move a session, "
-        "adjust weekly volume, add rest days) but don’t rewrite the full plan unless explicitly asked.\n"
+        "- If the plan is available, give concise, constructive feedback on the plan.\n"
         "- Be supportive and professional, not too verbose (max 2–3 sentences unless details are needed).\n"
         "- Keep tone positive and coaching-like. Use at most one emoji occasionally.\n"
-        "- You have acess to the tool `load_training_plan` if the user want acess to its training plan."
+        "======\n"
+        f"THE PLAN:\n {plan}"
     )
 
     resp = llm.invoke([
         SystemMessage(content=sys),
         *state["messages"]
     ])
+    resp.additional_kwargs["visible"] = False 
 
     return {"messages" : [resp]}
 
 
-def welcome_node(state, llm):
-    today = datetime.today().strftime("%Y-%m-%d")
-    sys = (
-        f"You are a warm, energetic concierge for an endurance training planner. Date: {today}. "
-        "Keep output to 2-4 short sentences, plain English, upbeat. Use at most one emoji. "
-        "Do NOT ask any of the questionnaire questions. Mention there we are here to make a new traning plan for him. "
-        "End with an invitation to begin."
-    )
-    prompt = (
-        "Write a concise welcome for an assistant that builds or improves running/cycling/trail plans. "
-    )
-    resp = llm.invoke([SystemMessage(content=sys), HumanMessage(content=prompt)])
-
-    garmin_consent = False
-
-    if os.environ.get("GARTH_TOKEN"):
-        garmin_consent = True
-
-    if garmin_consent:
-        QUESTIONNAIRE.pop('current_weekly_volume', None)
-        QUESTIONNAIRE.pop('longest_recent', None)
-        FIELDS.remove('current_weekly_volume')
-        FIELDS.remove('longest_recent')
-
-    return {"welcome": True, "garmin_consent": garmin_consent}
-
-
-def after_welcome_node(state, llm):
-
-    msgs = state.get("messages") or []
-
-    last_user = None
-    for m in reversed(msgs):
-        if isinstance(m, HumanMessage):
-            last_user = str(m.content).strip().lower()
-            break
-
-    if not last_user :
-        raise ValueError
-
-    sys = (
-        "You are a router that reads ONE user message and outputs a JSON object "
-        "that conforms strictly to the schema provided. "
-        "If the user starts describing specification of a program please return 'make'. "
-        "If the user show willingness to restart sports please return 'make'. "
-        "'make' means the user wants to create a new plan. "
-        "'discuss' means they already have a plan or want to talk about it."
-    )
-
-    resp = llm.invoke([
-        SystemMessage(content = sys),
-        HumanMessage(content=f"User : {last_user}")
-    ])
-
-    return {"mode" : resp.mode}
-
-
 def questionnaire_node(state, llm) :
-
 
     sys = (
         "Your role is simply to rewrite the question in a nice way for the user. \n"
@@ -213,6 +115,15 @@ def questionnaire_node(state, llm) :
 
     step = state.get("question_idx", 0)
     specs = state.get("specs", {})
+    garmin_consent = state.get("garmin_consent")
+
+    if garmin_consent and step == 0:
+        QUESTIONNAIRE.pop('current_weekly_volume', None)
+        QUESTIONNAIRE.pop('longest_recent', None)
+        FIELDS.remove('current_weekly_volume')
+        FIELDS.remove('longest_recent')
+
+
     if step < len(QUESTIONNAIRE) and step != 0:
 
         usr_resp = state["messages"][-1].content
@@ -245,8 +156,38 @@ def questionnaire_node(state, llm) :
             "question_idx": step,
             "specs": specs,
         }
+
+def garmin_node(state, llm):
+
+    try :
+        end = datetime.today().date()
+        start = (end - timedelta(days=90))
+        payload = garmin_tool.invoke({"from_date" : start, "to_date" : end})
+        resp = json.loads(payload)
+
+        summary = _get_fitness_summary(resp)
+
+    except Exception as e:
+        raise ValueError(f"Error while loading Garmin data : {e}")
     
 
+    sys = (
+    "You are an endurance coach. I will give you a small JSON summary of an athlete's recent Garmin data. "
+    "Explain that you loaded its garmin data to understand its fitness on the past 90 days."
+    "Write a short natural-language summary (3–5 sentences). "
+    "Keep it clear, simple, and motivational. "
+    "Explain that will help to tailor the plan."
+    "Highlight key aspects like average weekly training, session, activity frequency, and overall consistency. "
+    "Do not just restate the numbers—explain what they mean in words."
+    "If summary is empty state it."
+    )
+
+    hum = f"Here is the summary JSON:\n{summary}"
+
+    brief = llm.invoke([SystemMessage(content=sys), HumanMessage(content=hum)])
+    brief.additional_kwargs["visible"] = False 
+    
+    return {"garmin_data" : summary, "messages" : [brief]} 
 
 def coach_node(state, llm):
     specs_blob = json.dumps(state.get("specs") or {}, ensure_ascii=False)
@@ -263,8 +204,6 @@ def coach_node(state, llm):
             f"{garmin}"
         )
     
-
-
     sys = (
         f"Today's date is {datetime.today().strftime('%d-%m-%Y')}.\n"
         "You are a professional endurance coach (running, cycling, trail, triathlon).\n"
@@ -272,6 +211,7 @@ def coach_node(state, llm):
         "Respect availability, current volume, constraints, and progress gradually.\n"
         "Sessions must be precise and sport-appropriate (intensity, duration, pace/power/HR zones).\n"
         "If the brief conflicts with user constraints, prioritize user safety and constraints.\n"
+        "If the user make a modification request take it into account as much as possible while keeping the same spirit as the original plan.\n"
         "--- EVIDENCE BRIEF (web-sourced, use it): ---\n"
         f"{web_brief}\n"
         "--------------------------------------------\n"
@@ -293,6 +233,7 @@ def coach_node(state, llm):
     return {"plan": resp.plan, "justification": resp.justification or "No justification provided.", "modify_mode" : "continue", "modify_query" : None}
 
 
+
 def summary_node(state, llm):
     sys = (
         "Print the training plan as a clean markdown table, then add a 1–2 line justification. "
@@ -305,10 +246,30 @@ def summary_node(state, llm):
         "sources": sources
     }, ensure_ascii=False)
 
-    msgs = [SystemMessage(content=sys), HumanMessage(content=hum)]
-    resp = llm.invoke(input=msgs)
-    resp.additional_kwargs["visible"] = True
-    return {"messages": [resp]}
+    
+    resp = llm.invoke(input=[SystemMessage(content=sys), HumanMessage(content=hum)])
+    resp.additional_kwargs["visible"] = False
+
+    return {"messages": [resp], "start_route": "discuss"}
+
+
+def load_node(state, llm):
+
+    try : 
+        result = load_training_plan.invoke({})
+        data = json.loads(result)
+    
+        text = (
+            "✅ Plan loaded" if data.get("status") == "ok"
+            else f"⚠️ Save error: {data.get('error')}"
+        )
+
+    except Exception as e: 
+        data = {}
+        text = f"⚠️ Plan saving failed: {e}"
+
+    return {"messages": [AIMessage(content="\n\n" + text, additional_kwargs={"visible": False}), HumanMessage(content = "Shows me (markdown table plz) and comments my plan plz")], "plan" : data.get("plan", [])}
+
 
 
 def save_node(state, llm):
@@ -361,4 +322,4 @@ def save_confirm_node(state):
         except Exception:
             text = ""
 
-    return {"messages": [AIMessage(content="\n\n" + text, additional_kwargs={"visible": True})], "mode": "discuss"}
+    return {"messages": [AIMessage(content="\n\n" + text, additional_kwargs={"visible": True})]}
