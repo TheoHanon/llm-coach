@@ -1,7 +1,39 @@
 import pandas as pd
 import numpy as np
-import json
-from typing import Dict, Any, List
+import json, pathlib, os
+from typing import Dict, Any, List, Tuple
+
+
+from langchain_community.vectorstores import FAISS
+from langchain_mistralai import MistralAIEmbeddings
+from langchain.schema import Document
+
+_INDEX_DIR = pathlib.Path(__file__).resolve().parents[2] / "data" / "index_faiss"
+_INDEX = None
+_RETRIEVER = None
+
+def _get_retriever(k : int = 4):
+    global _INDEX, _RETRIEVER
+    if _RETRIEVER is None:
+        emb = MistralAIEmbeddings(model="mistral-embed")
+        _INDEX = FAISS.load_local(str(_INDEX_DIR), emb, allow_dangerous_deserialization=True)
+        _RETRIEVER = _INDEX.as_retriever(search_kwargs={"k": k, "fetch_k" : 20}, search_type = "mmr")
+    return _RETRIEVER
+
+
+def _retrieve(query : str, k : int = 4) -> Tuple[List[Document], List[Dict[str, Any]], str]:
+    retriever = _get_retriever(k)
+    docs: List[Document] = retriever.invoke(query)
+    bib, ctx = [], []
+
+    for i, d in enumerate(docs, start=1):
+        title = d.metadata.get("title") or d.metadata.get("filename") or f"Source {i}"
+        page  = d.metadata.get("page")
+        bib.append({"id": i, "title": title, "page": page, "category": d.metadata.get("category")})
+        ctx.append(f"[{i}] {d.page_content}")
+
+    return docs, bib, "\n\n".join(ctx)
+
 
 def _build_query(specs : Dict[str, str]) -> str:
 

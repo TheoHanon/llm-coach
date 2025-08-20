@@ -16,6 +16,10 @@ class State(TypedDict):
     search : Optional[bool]
     garmin_consent : Optional[bool]
 
+    web_ctx : Optional[Dict[str, Any]]
+    rag_ctx : Optional[Dict[str, Any]]
+    rag_bib : Optional[List[Dict[str, Any]]]
+    garmin_data : Optional[str]
 
     messages : Annotated[list, add_and_trim8]
     plan : Optional[List]
@@ -24,9 +28,7 @@ class State(TypedDict):
     question_idx : Optional[int]
     welcome : Optional[bool]
     mode : Literal["make", "discuss"]
-    modify_query : str
-    web_ctx : Optional[str]
-    garmin_data : Optional[str]
+    modify_query : Annotated[Optional[List[str]], add_messages]
 
 
 

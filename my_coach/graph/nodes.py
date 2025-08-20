@@ -7,7 +7,7 @@ from my_coach.tools_langchain.tool_save_training_plan import save_training_plan
 from my_coach.tools_langchain.tool_load_training_plan import load_training_plan
 from my_coach.tools_langchain.tool_search import tool_search
 from my_coach.mcp.mcp_garmin import garmin_tool
-from .utils import _get_fitness_summary, _build_query
+from .utils import _get_fitness_summary, _build_query, _retrieve
 
 QUESTIONNAIRE: Dict[str, str] = {
     "sport": "The sport (running / cycling / trail / triathlon) you want a program for",
@@ -29,6 +29,34 @@ FIELDS : List[str] = [
     "constraints",
     "additional_remarks",
 ]
+
+def retriever_node(state, llm):
+
+    specs = state.get("specs", {}) or {}
+    modify_query = (state.get("modify_query") or None)
+    garmin_data = (state.get("garmin") or "").strip()
+
+    # simple formatter
+    parts = []
+    for k, v in specs.items():
+        if v:
+            parts.append(f"{k}: {v}")
+
+    if garmin_data:
+        parts.append(f"garmin data: {garmin_data}")
+
+    if modify_query:
+        parts.append(f"additional request: " + " ".join(modify_query))
+
+    q = " | ".join(parts)
+    _, bib, ctx = _retrieve(q, k = 4)
+
+    rag_ctx = {
+        "brief" : ctx, 
+        "sources": bib
+    }
+
+    return {"rag_ctx" : rag_ctx}
 
 
 def research_node(state, llm):
@@ -172,15 +200,11 @@ def garmin_node(state, llm):
     
 
     sys = (
-    "You are an endurance coach. I will give you a small JSON summary of an athlete's recent Garmin data. "
-    "Explain that you loaded its garmin data to understand its fitness on the past 90 days."
-    "Write a short natural-language summary (3–5 sentences). "
-    "Keep it clear, simple, and motivational. "
-    "Explain that will help to tailor the plan."
-    "Highlight key aspects like average weekly training, session, activity frequency, and overall consistency. "
-    "Do not just restate the numbers—explain what they mean in words."
-    "If summary is empty state it."
+    "You are an endurance coach. Given a short JSON of the last 90 days of Garmin data, "
+    "write 3–5 sentences that explain what it means for fitness and training readiness. "
+    "Be clear, motivational, and avoid restating numbers verbatim. If empty, say so."
     )
+
 
     hum = f"Here is the summary JSON:\n{summary}"
 
@@ -190,60 +214,62 @@ def garmin_node(state, llm):
     return {"garmin_data" : summary, "messages" : [brief]} 
 
 def coach_node(state, llm):
-    specs_blob = json.dumps(state.get("specs") or {}, ensure_ascii=False)
-    web_brief = (state.get("web_ctx") or {}).get("brief","")
+    specs_blob   = json.dumps(state.get("specs") or {}, ensure_ascii=False)
+    web_brief    = state.get("web_ctx", {}).get("brief", "")
+    rag_ctx      = state.get("rag_ctx", {}).get("brief", "")           
+    modify_query = state.get("modify_query")
+    garmin       = state.get("garmin_data")             
 
+    MAX_RAG_CHARS = 8000
+    MAX_WEB_BRIEF = 2000
+    rag_ctx  = rag_ctx[:MAX_RAG_CHARS]
+    web_brief = web_brief[:MAX_WEB_BRIEF]
 
-    modify_query = state.get("modify_query", None)
-    garmin = state.get("garmin_data")
-
-    caps = ""
-    if garmin:
-        caps = (
-            f"\n--- GARMIN FITNESS INFORMATION (use to set bounds, prioritize this information): ---\n"
-            f"{garmin}"
-        )
-    
     sys = (
-        f"Today's date is {datetime.today().strftime('%d-%m-%Y')}.\n"
-        "You are a professional endurance coach (running, cycling, trail, triathlon).\n"
-        "Create a clear, actionable one-month training plan per the spec, grounded in the evidence brief below.\n"
-        "Respect availability, current volume, constraints, and progress gradually.\n"
-        "Sessions must be precise and sport-appropriate (intensity, duration, pace/power/HR zones).\n"
-        "If the brief conflicts with user constraints, prioritize user safety and constraints.\n"
-        "If the user make a modification request take it into account as much as possible while keeping the same spirit as the original plan.\n"
-        "--- EVIDENCE BRIEF (web-sourced, use it): ---\n"
-        f"{web_brief}\n"
-        "--------------------------------------------\n"
-        "LIMIT : If the plan is more than 1 months long, start to generate 1 month.\n"
-        "--------------------------------------------\n"
-        f"{caps}"
+        f"Today is {datetime.today():%Y-%m-%d}.\n"
+        "You are a professional endurance coach.\n"
+        "Populate the structured fields the caller requested; do not add extra keys or any commentary outside the structured output.\n"
+        "STRICT : Respect availability of the user , current volume, constraints; progress conservatively.\n"
+        "SCRICT GUIDELINE : Generate at most 28 sessions. \n"
+        "Use evidence from RAG and web when helpful; place any citations only in the justification (e.g., [1], [W1]).\n"
+        "DESCRIPTION: one medium line (≈120-200 chars, 1-2 sentences, no newlines). Include: sport; warm-up; main set; cool-down; intensity (pace/power/HR/RPE/temp). Avoid bare lines like “60 min Z1”.\n"
+        "Rest day don't need to be stated."
     )
 
+    hum = (
+        "--- TRAINING SPEC (JSON) ---\n" + specs_blob +
+        (f"\n--- GARMIN (bounds) ---\n{garmin}" if garmin else "") +
+        "\n--- EVIDENCE CONTEXT (RAG) ---\n" + (rag_ctx[:8000] or "No local evidence.") +
+        "\n--- WEB BRIEF ---\n" + (web_brief or "No web brief.")    
+    )
 
-    msgs = [
-        SystemMessage(content=sys),
-        HumanMessage(content=f"TrainingSpecification JSON:\n{specs_blob}")
-    ]
     if modify_query:
-        msgs.append(HumanMessage(content=f"USER_MODIFY_REQUEST:\n{modify_query}"))
+        hum += f"\n--- USER MODIFY REQUEST ---\n" + "|".join(modify_query) + "\n"
 
+    resp = llm.invoke([SystemMessage(content=sys), HumanMessage(content=hum)])
 
-    resp = llm.invoke(msgs)
-    return {"plan": resp.plan, "justification": resp.justification or "No justification provided.", "modify_mode" : "continue", "modify_query" : None}
-
+    return {
+        "plan": getattr(resp, "plan", state.get("plan", [])),
+        "justification": getattr(resp, "justification", "No justification provided."),
+        "modify_mode": "continue",
+    }
 
 
 def summary_node(state, llm):
     sys = (
         "Print the training plan as a clean markdown table, then add a 1–2 line justification. "
         "End with a compact 'Sources' list using markdown links."
+        "Cite all the provided sources."
     )
-    sources = (state.get("web_ctx") or {}).get("sources", [])
+
+
+    web_sources = (state.get("web_ctx")).get("sources", [])
+    rag_sources = state.get("rag_ctx", {}).get("sources", [])
+
     hum = json.dumps({
         "plan": [item.model_dump_json() for item in state["plan"]],
         "justification": state.get("justification"),
-        "sources": sources
+        "sources": [web_sources, rag_sources]
     }, ensure_ascii=False)
 
     
@@ -302,7 +328,7 @@ def modify_node(state, llm):
     resp = llm.invoke([SystemMessage(content = sys), HumanMessage(content = last_usr_msg)],
             config={"temperature": 0, "max_tokens": 150})
     
-    return {"modify_mode" : resp.mode, "modify_query" : last_usr_msg}
+    return {"modify_mode" : resp.mode, "modify_query" : [last_usr_msg]}
 
 
 
