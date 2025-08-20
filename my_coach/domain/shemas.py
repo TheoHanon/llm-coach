@@ -1,26 +1,28 @@
-from typing import List, Optional, Literal
+from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 from datetime import date, datetime
 
 
 class WelcomeRoute(BaseModel):
-    mode : Literal["make", "discuss"] = Field(description="The chosen mode. 'make' = create a new plan, 'discuss' = talk about an existing one.")
+    mode: Literal["make", "discuss"] = Field(
+        description="The chosen mode. 'make' = create a new plan, 'discuss' = talk about an existing one."
+    )
 
 
 class ModifyRoute(BaseModel):
-    mode : Literal["modify", "continue"] = Field(description="The chosen mode. 'modify' = modify the current plan, 'continue' = don't want to modify.")
+    mode: Literal["modify", "continue"] = Field(
+        description="The chosen mode. 'modify' = modify the current plan, 'continue' = don't want to modify."
+    )
+
 
 class TrainingItem(BaseModel):
-
     Date: date = Field(
-        description="Session date, format DD-MM-YYYY.",
-        examples=["12-08-2025"]
+        description="Session date, format DD-MM-YYYY.", examples=["12-08-2025"]
     )
     Description: str = Field(
         description="Free-text description of the session.",
-        examples=["10 km easy + strides"]
+        examples=["10 km easy + strides"],
     )
-
 
     @field_validator("Date", mode="before")
     @classmethod
@@ -37,6 +39,5 @@ class TrainingItem(BaseModel):
 
 
 class TrainingPlan(BaseModel):
-
-    plan : list[TrainingItem]
-    justification : str
+    plan: list[TrainingItem]
+    justification: str

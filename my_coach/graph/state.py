@@ -4,32 +4,29 @@ from langgraph.channels import LastValue
 from functools import partial
 
 
-def add_and_trim(prev : list, new : list, k : int):
+def add_and_trim(prev: list, new: list, k: int):
     return add_messages(prev, new)
 
-add_and_trim8 = partial(add_and_trim, k = 8)
+
+add_and_trim8 = partial(add_and_trim, k=8)
+
 
 class State(TypedDict):
+    start_route: Annotated[Optional[Literal["discuss", "new_plan"]], LastValue]
+    modify_mode: Literal["modify", "continue"]
+    search: Optional[bool]
+    garmin_consent: Optional[bool]
 
-    start_route : Annotated[Optional[Literal["discuss", "new_plan"]], LastValue]
-    modify_mode : Literal["modify", "continue"]
-    search : Optional[bool]
-    garmin_consent : Optional[bool]
+    web_ctx: Optional[Dict[str, Any]]
+    rag_ctx: Optional[Dict[str, Any]]
+    rag_bib: Optional[List[Dict[str, Any]]]
+    garmin_data: Optional[str]
 
-    web_ctx : Optional[Dict[str, Any]]
-    rag_ctx : Optional[Dict[str, Any]]
-    rag_bib : Optional[List[Dict[str, Any]]]
-    garmin_data : Optional[str]
-
-    messages : Annotated[list, add_and_trim8]
-    plan : Optional[List]
-    justification : Optional[str]
-    specs : Dict[str, Any]
-    question_idx : Optional[int]
-    welcome : Optional[bool]
-    mode : Literal["make", "discuss"]
-    modify_query : Annotated[Optional[List[str]], add_messages]
-
-
-
-    
+    messages: Annotated[list, add_and_trim8]
+    plan: Optional[List]
+    justification: Optional[str]
+    specs: Dict[str, Any]
+    question_idx: Optional[int]
+    welcome: Optional[bool]
+    mode: Literal["make", "discuss"]
+    modify_query: Annotated[Optional[List[str]], add_messages]

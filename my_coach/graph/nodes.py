@@ -1,8 +1,7 @@
 from typing import List, Dict
 from datetime import datetime, timedelta
-import json, os
-from langchain_core.messages import ToolMessage, AIMessage, SystemMessage, HumanMessage
-from langgraph.prebuilt import ToolNode
+import json
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from my_coach.tools_langchain.tool_save_training_plan import save_training_plan
 from my_coach.tools_langchain.tool_load_training_plan import load_training_plan
 from my_coach.tools_langchain.tool_search import tool_search
@@ -19,7 +18,7 @@ QUESTIONNAIRE: Dict[str, str] = {
     "constraints": "Constraints (injuries, travel, equipment, surfaces)",
     "additional_remarks": "Additional specification the user might want to work on ?",
 }
-FIELDS : List[str] = [
+FIELDS: List[str] = [
     "sport",
     "goal",
     "target_event_date",
@@ -30,10 +29,10 @@ FIELDS : List[str] = [
     "additional_remarks",
 ]
 
-def retriever_node(state, llm):
 
+def retriever_node(state, llm):
     specs = state.get("specs", {}) or {}
-    modify_query = (state.get("modify_query") or None)
+    modify_query = state.get("modify_query") or None
     garmin_data = (state.get("garmin") or "").strip()
 
     # simple formatter
@@ -46,21 +45,17 @@ def retriever_node(state, llm):
         parts.append(f"garmin data: {garmin_data}")
 
     if modify_query:
-        parts.append(f"additional request: " + " ".join(modify_query))
+        parts.append("additional request: " + " ".join(modify_query))
 
     q = " | ".join(parts)
-    _, bib, ctx = _retrieve(q, k = 4)
+    _, bib, ctx = _retrieve(q, k=4)
 
-    rag_ctx = {
-        "brief" : ctx, 
-        "sources": bib
-    }
+    rag_ctx = {"brief": ctx, "sources": bib}
 
-    return {"rag_ctx" : rag_ctx}
+    return {"rag_ctx": rag_ctx}
 
 
 def research_node(state, llm):
-
     specs = state.get("specs", {})
     modify_query = state.get("modify_query", "")
 
@@ -69,11 +64,11 @@ def research_node(state, llm):
 
     query = _build_query(specs)
 
-    # search 
+    # search
 
-    try : 
-        hits = tool_search.invoke({"query" : query})
-    except:
+    try:
+        hits = tool_search.invoke({"query": query})
+    except Exception:
         hits = None
 
     results = (hits or {}).get("results", [])
@@ -86,27 +81,25 @@ def research_node(state, llm):
         "- Each bullet: actionable facts or protocols worth knowing while creating a training plan, followed by (source: URL).\n"
         "- Prefer consensus/guidelines; avoid fringe claims."
     )
-    pack = "\n\n".join(
-        f"TITLE: {r.get('title')}\nURL: {r.get('url')}\nEXCERPT:\n{r.get('content','')[:1500]}"
-        for r in results
-    ) or "No results."
+    pack = (
+        "\n\n".join(
+            f"TITLE: {r.get('title')}\nURL: {r.get('url')}\nEXCERPT:\n{r.get('content', '')[:1500]}"
+            for r in results
+        )
+        or "No results."
+    )
 
-    brief = llm.invoke([
-        SystemMessage(content = sys), 
-        HumanMessage(content = pack)
-    ])
+    brief = llm.invoke([SystemMessage(content=sys), HumanMessage(content=pack)])
 
     web_ctx = {
-        "brief" : brief.content, 
-        "sources": [{"title": r.get("title"), "url": r.get("url")} for r in results]
+        "brief": brief.content,
+        "sources": [{"title": r.get("title"), "url": r.get("url")} for r in results],
     }
 
     return {"web_ctx": web_ctx}
 
 
-
 def discuss_node(state, llm):
-
     plan = state.get("plan", [])
     sys = (
         "You are a professional endurance coach (running, cycling, trail, triathlon). "
@@ -119,17 +112,13 @@ def discuss_node(state, llm):
         f"THE PLAN:\n {plan}"
     )
 
-    resp = llm.invoke([
-        SystemMessage(content=sys),
-        *state["messages"]
-    ])
-    resp.additional_kwargs["visible"] = False 
+    resp = llm.invoke([SystemMessage(content=sys), *state["messages"]])
+    resp.additional_kwargs["visible"] = False
 
-    return {"messages" : [resp]}
+    return {"messages": [resp]}
 
 
-def questionnaire_node(state, llm) :
-
+def questionnaire_node(state, llm):
     sys = (
         "Your role is simply to rewrite the question in a nice way for the user. \n"
         "Stay concise but not cold. The questions will tailor a training plan. Ensure continuity.\n"
@@ -140,43 +129,41 @@ def questionnaire_node(state, llm) :
         ""
     )
 
-
     step = state.get("question_idx", 0)
     specs = state.get("specs", {})
     garmin_consent = state.get("garmin_consent")
 
     if garmin_consent and step == 0:
-        QUESTIONNAIRE.pop('current_weekly_volume', None)
-        QUESTIONNAIRE.pop('longest_recent', None)
-        FIELDS.remove('current_weekly_volume')
-        FIELDS.remove('longest_recent')
-
+        QUESTIONNAIRE.pop("current_weekly_volume", None)
+        QUESTIONNAIRE.pop("longest_recent", None)
+        FIELDS.remove("current_weekly_volume")
+        FIELDS.remove("longest_recent")
 
     if step < len(QUESTIONNAIRE) and step != 0:
-
         usr_resp = state["messages"][-1].content
         specs[FIELDS[step - 1]] = usr_resp
         step += 1
-    
 
     if step < len(FIELDS):
-
         nf = FIELDS[step]
         generic_q = QUESTIONNAIRE[nf]
 
-        resp = llm.invoke(input = [
-            SystemMessage(content = sys), 
-            *state["messages"],
-            HumanMessage(content = "QUESTION:\n" + generic_q)
-        ])
+        resp = llm.invoke(
+            input=[
+                SystemMessage(content=sys),
+                *state["messages"],
+                HumanMessage(content="QUESTION:\n" + generic_q),
+            ]
+        )
 
         new_q = resp.content
 
-
         return {
-            "messages" : [AIMessage(content = new_q,  additional_kwargs={"visible": False})], 
-            "question_idx" : step + 1 if step ==0 else step,
-            "specs" : specs
+            "messages": [
+                AIMessage(content=new_q, additional_kwargs={"visible": False})
+            ],
+            "question_idx": step + 1 if step == 0 else step,
+            "specs": specs,
         }
 
     else:
@@ -185,44 +172,43 @@ def questionnaire_node(state, llm) :
             "specs": specs,
         }
 
-def garmin_node(state, llm):
 
-    try :
+def garmin_node(state, llm):
+    try:
         end = datetime.today().date()
-        start = (end - timedelta(days=90))
-        payload = garmin_tool.invoke({"from_date" : start, "to_date" : end})
+        start = end - timedelta(days=90)
+        payload = garmin_tool.invoke({"from_date": start, "to_date": end})
         resp = json.loads(payload)
 
         summary = _get_fitness_summary(resp)
 
     except Exception as e:
         raise ValueError(f"Error while loading Garmin data : {e}")
-    
 
     sys = (
-    "You are an endurance coach. Given a short JSON of the last 90 days of Garmin data, "
-    "write 3–5 sentences that explain what it means for fitness and training readiness. "
-    "Be clear, motivational, and avoid restating numbers verbatim. If empty, say so."
+        "You are an endurance coach. Given a short JSON of the last 90 days of Garmin data, "
+        "write 3–5 sentences that explain what it means for fitness and training readiness. "
+        "Be clear, motivational, and avoid restating numbers verbatim. If empty, say so."
     )
-
 
     hum = f"Here is the summary JSON:\n{summary}"
 
     brief = llm.invoke([SystemMessage(content=sys), HumanMessage(content=hum)])
-    brief.additional_kwargs["visible"] = False 
-    
-    return {"garmin_data" : summary, "messages" : [brief]} 
+    brief.additional_kwargs["visible"] = False
+
+    return {"garmin_data": summary, "messages": [brief]}
+
 
 def coach_node(state, llm):
-    specs_blob   = json.dumps(state.get("specs") or {}, ensure_ascii=False)
-    web_brief    = state.get("web_ctx", {}).get("brief", "")
-    rag_ctx      = state.get("rag_ctx", {}).get("brief", "")           
+    specs_blob = json.dumps(state.get("specs") or {}, ensure_ascii=False)
+    web_brief = state.get("web_ctx", {}).get("brief", "")
+    rag_ctx = state.get("rag_ctx", {}).get("brief", "")
     modify_query = state.get("modify_query")
-    garmin       = state.get("garmin_data")             
+    garmin = state.get("garmin_data")
 
     MAX_RAG_CHARS = 8000
     MAX_WEB_BRIEF = 2000
-    rag_ctx  = rag_ctx[:MAX_RAG_CHARS]
+    rag_ctx = rag_ctx[:MAX_RAG_CHARS]
     web_brief = web_brief[:MAX_WEB_BRIEF]
 
     sys = (
@@ -237,14 +223,17 @@ def coach_node(state, llm):
     )
 
     hum = (
-        "--- TRAINING SPEC (JSON) ---\n" + specs_blob +
-        (f"\n--- GARMIN (bounds) ---\n{garmin}" if garmin else "") +
-        "\n--- EVIDENCE CONTEXT (RAG) ---\n" + (rag_ctx[:8000] or "No local evidence.") +
-        "\n--- WEB BRIEF ---\n" + (web_brief or "No web brief.")    
+        "--- TRAINING SPEC (JSON) ---\n"
+        + specs_blob
+        + (f"\n--- GARMIN (bounds) ---\n{garmin}" if garmin else "")
+        + "\n--- EVIDENCE CONTEXT (RAG) ---\n"
+        + (rag_ctx[:8000] or "No local evidence.")
+        + "\n--- WEB BRIEF ---\n"
+        + (web_brief or "No web brief.")
     )
 
     if modify_query:
-        hum += f"\n--- USER MODIFY REQUEST ---\n" + "|".join(modify_query) + "\n"
+        hum += "\n--- USER MODIFY REQUEST ---\n" + "|".join(modify_query) + "\n"
 
     resp = llm.invoke([SystemMessage(content=sys), HumanMessage(content=hum)])
 
@@ -262,17 +251,18 @@ def summary_node(state, llm):
         "Cite all the provided sources."
     )
 
-
     web_sources = (state.get("web_ctx")).get("sources", [])
     rag_sources = state.get("rag_ctx", {}).get("sources", [])
 
-    hum = json.dumps({
-        "plan": [item.model_dump_json() for item in state["plan"]],
-        "justification": state.get("justification"),
-        "sources": [web_sources, rag_sources]
-    }, ensure_ascii=False)
+    hum = json.dumps(
+        {
+            "plan": [item.model_dump_json() for item in state["plan"]],
+            "justification": state.get("justification"),
+            "sources": [web_sources, rag_sources],
+        },
+        ensure_ascii=False,
+    )
 
-    
     resp = llm.invoke(input=[SystemMessage(content=sys), HumanMessage(content=hum)])
     resp.additional_kwargs["visible"] = False
 
@@ -280,39 +270,54 @@ def summary_node(state, llm):
 
 
 def load_node(state, llm):
-
-    try : 
+    try:
         result = load_training_plan.invoke({})
         data = json.loads(result)
-    
+
         text = (
-            "✅ Plan loaded" if data.get("status") == "ok"
+            "✅ Plan loaded"
+            if data.get("status") == "ok"
             else f"⚠️ Save error: {data.get('error')}"
         )
 
-    except Exception as e: 
+    except Exception as e:
         data = {}
         text = f"⚠️ Plan saving failed: {e}"
 
-    return {"messages": [AIMessage(content="\n\n" + text, additional_kwargs={"visible": False}), HumanMessage(content = "Shows me (markdown table plz) and comments my plan plz")], "plan" : data.get("plan", [])}
-
+    return {
+        "messages": [
+            AIMessage(content="\n\n" + text, additional_kwargs={"visible": False}),
+            HumanMessage(
+                content="Shows me (markdown table plz) and comments my plan plz"
+            ),
+        ],
+        "plan": data.get("plan", []),
+    }
 
 
 def save_node(state, llm):
     try:
         result = save_training_plan.invoke({"training_plan": state["plan"]})
         data = json.loads(result)
-        text = (f"✅ Plan saved ({data['rows_written']} rows) to `{data['path']}` "
-                f"[{data['date_range']['start']} → {data['date_range']['end']}]") if data.get("status")=="ok" \
-               else f"⚠️ Save error: {data}"
+        text = (
+            (
+                f"✅ Plan saved ({data['rows_written']} rows) to `{data['path']}` "
+                f"[{data['date_range']['start']} → {data['date_range']['end']}]"
+            )
+            if data.get("status") == "ok"
+            else f"⚠️ Save error: {data}"
+        )
     except Exception as e:
         text = f"⚠️ Plan saving failed: {e}"
 
-    return {"messages": [AIMessage(content="\n\n" + text, additional_kwargs={"visible": True})]}
+    return {
+        "messages": [
+            AIMessage(content="\n\n" + text, additional_kwargs={"visible": True})
+        ]
+    }
 
 
 def modify_node(state, llm):
-
     sys = (
         "You are a strict router. Output ONLY the structured object.\n"
         "- 'modify' ONLY if the user EXPLICITLY asks to change the existing plan/schedule/sessions.\n"
@@ -324,16 +329,19 @@ def modify_node(state, llm):
         if isinstance(m, HumanMessage):
             last_usr_msg = m.content
             break
-    
-    resp = llm.invoke([SystemMessage(content = sys), HumanMessage(content = last_usr_msg)],
-            config={"temperature": 0, "max_tokens": 150})
-    
-    return {"modify_mode" : resp.mode, "modify_query" : [last_usr_msg]}
 
+    resp = llm.invoke(
+        [SystemMessage(content=sys), HumanMessage(content=last_usr_msg)],
+        config={"temperature": 0, "max_tokens": 150},
+    )
+
+    return {"modify_mode": resp.mode, "modify_query": [last_usr_msg]}
 
 
 def save_confirm_node(state):
-    msg = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
+    msg = next(
+        (m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None
+    )
     text = "Saved your plan."
     if msg and msg.content:
         try:
@@ -348,4 +356,8 @@ def save_confirm_node(state):
         except Exception:
             text = ""
 
-    return {"messages": [AIMessage(content="\n\n" + text, additional_kwargs={"visible": True})]}
+    return {
+        "messages": [
+            AIMessage(content="\n\n" + text, additional_kwargs={"visible": True})
+        ]
+    }
